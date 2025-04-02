@@ -1,0 +1,42 @@
+import plotly.express as px
+import plotly.offline as pyo
+
+# Create the bar chart
+bar_data = {
+    'Category': ['A', 'B', 'C', 'D'],
+    'Values': [10, 20, 30, 40]
+}
+fig_bar = px.bar(bar_data, x='Category', y='Values', title='Sample Bar Chart')
+
+# Create the pie chart
+pie_data = {
+    'Category': ['A', 'B', 'C', 'D'],
+    'Values': [10, 20, 30, 40]
+}
+fig_pie = px.pie(pie_data, names='Category', values='Values', title='Sample Pie Chart')
+
+# Generate HTML div strings for each figure without the Plotly.js script
+bar_div = pyo.plot(fig_bar, include_plotlyjs=False, output_type='div')
+pie_div = pyo.plot(fig_pie, include_plotlyjs=False, output_type='div')
+
+# Create an HTML template and embed both charts.
+html_template = f"""
+<html>
+<head>
+    <!-- Include Plotly.js from CDN -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <title>Combined Bar and Pie Charts</title>
+</head>
+<body>
+    <h1>Bar and Pie Charts</h1>
+    <div>{bar_div}</div>
+    <div>{pie_div}</div>
+</body>
+</html>
+"""
+
+# Save the combined HTML to a file
+with open("charts.html", "w") as f:
+    f.write(html_template)
+
+print("charts.html has been created with both charts.")
