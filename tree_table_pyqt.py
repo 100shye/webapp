@@ -138,27 +138,39 @@ class StepsPanel(QWidget):
         phase1 = QStandardItem("Phase 1: Planning"); phase1.setEditable(True)
         root.appendRow(phase1)
         sub1 = QStandardItem("Sub-task A: Research"); sub1.setEditable(True)
+        sub2 = QStandardItem("Sub-task A: DD"); sub1.setEditable(True)
         phase1.appendRow(sub1)
+        phase1.appendRow(sub2)
         phase2 = QStandardItem("Phase 2: Execution"); phase2.setEditable(True)
         root.appendRow(phase2)
 
-# Main Window (Unchanged)
+
+
+# Main Window (MODIFIED)
+# (Keep all your existing imports at the top of the file)
+# Make sure to add this one if it's not already there for openpyxl > 2.4
+from openpyxl.styles import Font, Alignment 
+
+# ... (Keep ReadOnlyParentModel, ProjectPanel, and StepsPanel classes as they are) ...
+
+# Main Window (CORRECTED)
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PyQt5 Dual Tree Table App")
-        self.setGeometry(300, 200, 800, 750)
+        self.setGeometry(300, 200, 1200, 800)
         main_container = QWidget(); main_layout = QVBoxLayout(main_container)
         self.setup_menu()
         splitter = QSplitter(Qt.Vertical)
         self.project_panel = ProjectPanel(); self.steps_panel = StepsPanel()
         splitter.addWidget(self.project_panel); splitter.addWidget(self.steps_panel)
-        splitter.setSizes([350, 350])
+        splitter.setSizes([400, 400])
         main_layout.addWidget(splitter)
         self.setup_global_buttons(main_layout)
         self.setCentralWidget(main_container)
 
     def setup_global_buttons(self, layout):
+        # (This function is unchanged from your original code)
         button_layout = QHBoxLayout()
         button_layout.addWidget(QLabel("Filename:"))
         self.filename_input = QLineEdit("my_project.json")
@@ -173,27 +185,107 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(export_xlsx_button)
         button_layout.addStretch()
         layout.addLayout(button_layout)
+    
+    def _get_max_depth(self, parent_item):
+        """
+        FIXED: Recursively finds the number of levels in the tree.
+        A tree with only top-level items has a depth of 1.
+        A tree with a child has a depth of 2, etc.
+        """
+        if not parent_item.hasChildren():
+            return 0
+        
+        max_child_depth = 0
+        for r in range(parent_item.rowCount()):
+            child_item = parent_item.child(r, 0)
+            # The depth of this branch is 1 (for the child itself) plus the depth of its own subtree.
+            depth = 1 + self._get_max_depth(child_item)
+            if depth > max_child_depth:
+                max_child_depth = depth
+        return max_child_depth
 
-    def _write_model_to_sheet(self, model, sheet):
+    def _write_model_to_sheet_merged(self, model, sheet):
+        """
+        Writes a QStandardItemModel to an openpyxl sheet with a merged, hierarchical structure.
+        """
         bold_font = Font(bold=True)
-        headers = [model.headerData(i, Qt.Horizontal) for i in range(model.columnCount())]
-        sheet.append(headers)
-        for cell in sheet[1]: cell.font = bold_font
-        def walk_tree(parent_item, depth):
+        center_align = Alignment(vertical='center', horizontal='left', wrap_text=True)
+
+        def _count_branch_rows(item):
+            if not item or not item.hasChildren():
+                return 1
+            count = 0
+            for i in range(item.rowCount()):
+                count += _count_branch_rows(item.child(i, 0))
+            return count
+
+        def _recursive_write_and_merge(parent_item, start_row, depth):
+            current_row = start_row
+            col_offset = depth * model.columnCount()
+
             for r in range(parent_item.rowCount()):
-                row_data = []
-                is_parent = parent_item.child(r, 0).hasChildren()
+                item_for_this_row = parent_item.child(r, 0)
+                row_span = _count_branch_rows(item_for_this_row)
+                
                 for c in range(model.columnCount()):
-                    item = parent_item.child(r, c)
-                    text = item.text() if item else ""
-                    if c == 0: text = "    " * depth + text
-                    row_data.append(text)
-                sheet.append(row_data)
-                if is_parent:
-                    for cell in sheet[sheet.max_row]: cell.font = bold_font
-                child_parent = parent_item.child(r, 0)
-                if child_parent: walk_tree(child_parent, depth + 1)
-        walk_tree(model.invisibleRootItem(), 0)
+                    cell_item = parent_item.child(r, c)
+                    text = cell_item.text() if cell_item else ""
+                    
+                    cell = sheet.cell(row=current_row, column=col_offset + c + 1, value=text)
+                    cell.alignment = center_align
+                    
+                    if item_for_this_row.hasChildren():
+                        cell.font = bold_font
+                    
+                    if row_span > 1:
+                        sheet.merge_cells(
+                            start_row=current_row,
+                            start_column=col_offset + c + 1,
+                            end_row=current_row + row_span - 1,
+                            end_column=col_offset + c + 1
+                        )
+
+                if item_for_this_row.hasChildren():
+                    _recursive_write_and_merge(item_for_this_row, current_row, depth + 1)
+                
+                current_row += row_span
+
+        # --- Main logic for _write_model_to_sheet_merged ---
+        # 1. Determine headers based on max depth
+        base_headers = [model.headerData(i, Qt.Horizontal) for i in range(model.columnCount())]
+        # FIXED: Correctly calculate the number of levels and generate headers.
+        num_levels = self._get_max_depth(model.invisibleRootItem())
+        if num_levels == 0 and model.rowCount() > 0: # Handle case with only top-level items
+            num_levels = 1
+        
+        all_headers = []
+        for i in range(num_levels):
+            all_headers.extend(base_headers)
+        
+        if all_headers:
+            sheet.append(all_headers)
+            for cell in sheet[1]:
+                cell.font = bold_font
+
+        # 2. Start the recursive writing process
+        _recursive_write_and_merge(model.invisibleRootItem(), start_row=2, depth=0)
+        
+        # 3. Auto-adjust column widths
+        for i, column_cells in enumerate(sheet.columns):
+            # Use the header text length as a minimum width
+            header_text = all_headers[i] if i < len(all_headers) else ''
+            max_length = len(header_text)
+            column = column_cells[0].column_letter
+
+            for cell in column_cells:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            # Add a little padding, but cap the max width
+            adjusted_width = min((max_length + 2) * 1.2, 50)
+            sheet.column_dimensions[column].width = adjusted_width
 
     def export_to_xlsx(self):
         options = QFileDialog.Options()
@@ -201,15 +293,23 @@ class MainWindow(QMainWindow):
         if not filePath: return
         try:
             wb = openpyxl.Workbook()
-            sheet1 = wb.active; sheet1.title = "Project Management"
-            self._write_model_to_sheet(self.project_panel.model, sheet1)
+            
+            # Export Project Panel
+            sheet1 = wb.active
+            sheet1.title = "Project Management"
+            self._write_model_to_sheet_merged(self.project_panel.model, sheet1)
+
+            # Export Steps Panel
             sheet2 = wb.create_sheet(title="Sequential Steps")
-            self._write_model_to_sheet(self.steps_panel.model, sheet2)
+            self._write_model_to_sheet_merged(self.steps_panel.model, sheet2)
+            
             wb.save(filePath)
             self.statusBar().showMessage(f"Successfully exported to {filePath}", 5000)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Could not export file:\n{e}")
-    
+
+    # (The rest of the MainWindow class: setup_menu, _get_app_state_data, quick_save_state, save_state_as, load_state, serialize_model, deserialize_model remains unchanged)
+    # ... PASTE THE REST OF YOUR ORIGINAL MainWindow CODE HERE ...
     def setup_menu(self):
         menubar = self.menuBar()
         file_menu = menubar.addMenu('&File')
@@ -302,6 +402,7 @@ class MainWindow(QMainWindow):
             new_parent = parent_item.child(parent_item.rowCount() - 1, 0)
             if node['children']: self.deserialize_model(model, node['children'], new_parent)
 
+# ... (The if __name__ == '__main__': block remains unchanged)
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyle(QStyleFactory.create("Fusion"))
